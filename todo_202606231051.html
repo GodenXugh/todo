@@ -544,10 +544,10 @@ function getFiltered() {
   }).sort((a,b) => {
     let va=a[sortKey]||'', vb=b[sortKey]||'';
     if(sortKey==='due_date') {
-      // 无到期日的任务始终排在最后，不随升/降序改变
-      if(!va && !vb) return 0;
-      if(!va) return 1;
-      if(!vb) return -1;
+      // 无到期日的任务（多为刚新建、尚未填信息）始终排在最前，且新建的排在最上方，便于立即补充信息
+      if(!va && !vb) return (b.created_at||'').localeCompare(a.created_at||'');
+      if(!va) return -1;
+      if(!vb) return 1;
     }
     if(sortKey==='priority') { va=+va; vb=+vb; }
     if(va<vb) return -sortDir;
