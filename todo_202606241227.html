@@ -132,6 +132,7 @@ td.col-check, th.col-check { text-align: center; padding: 0; }
 .action-btn { background: none; border: none; cursor: pointer; color: var(--text3); font-size: 13px; padding: 2px 5px; border-radius: 3px; font-family: var(--font); transition: color .1s, background .1s; }
 .action-btn.del:hover { color: var(--p1); background: var(--p1-bg); }
 .action-btn.restore:hover { color: var(--done); background: #e8f5e9; }
+.action-btn.copy:hover { color: var(--accent); background: var(--accent-light); }
 
 .inline-input { width: 100%; height: 26px; padding: 0 4px; border: 1px solid var(--accent); border-radius: 3px; font-family: var(--font); font-size: 12.5px; color: var(--text); background: #fff; outline: none; }
 
@@ -183,7 +184,7 @@ td.col-check, th.col-check { text-align: center; padding: 0; }
 .sb-copyright { padding: 10px 12px 8px; font-size: 10px; color: var(--text3); line-height: 1.6; margin-top: auto; border-top: 1px solid var(--border); }
 
 /* ===== SELECT POPUP ===== */
-#select-popup { display: none; position: fixed; z-index: 5000; background: var(--surface); border: 1px solid var(--border2); border-radius: 5px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 6px; min-width: 150px; max-width: 220px; max-height: 260px; overflow-y: auto; }
+#select-popup { display: none; position: fixed; z-index: 5000; background: var(--surface); border: 1px solid var(--border2); border-radius: 5px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 6px; min-width: 150px; max-width: 220px; max-height: 420px; overflow-y: auto; }
 #select-popup.show { display: block; }
 .sp-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; cursor: pointer; border-radius: 3px; font-size: 12.5px; color: var(--text2); white-space: nowrap; }
 .sp-item:hover { background: var(--accent-light); color: var(--accent); }
@@ -307,7 +308,7 @@ const ALL_COLS = [
   { key:'due_date', label:'到期日',width:88,  sortable:true },
   { key:'source',   label:'来源',  width:90,  sortable:true },
   { key:'custom',   label:'自定义', width:90,  sortable:true },
-  { key:'action',   label:'✕',     width:44,  sortable:false, fixed:true },
+  { key:'action',   label:'✕',     width:64,  sortable:false, fixed:true },
 ];
 
 // Column order (keys), persisted
@@ -369,6 +370,8 @@ function load() {
       nextId = d.nextId || 1;
       if (d.colOrder) colOrder = d.colOrder;
       if (d.colWidths) Object.assign(colWidths, d.colWidths);
+      // 操作列需容纳「复制 + 删除」两个按钮，确保最小宽度
+      if (colWidths.action < 60) colWidths.action = 64;
     }
   } catch(e) {}
   if (!tasks.length && !deletedTasks.length) seedDemo();
@@ -574,6 +577,18 @@ function getAllAssignees() {
   const set=new Set();
   tasks.forEach(t=>(t.assignees||'').split(',').map(s=>s.trim()).filter(Boolean).forEach(p=>set.add(p)));
   return [...set].sort();
+}
+// 按出现次数从多到少排列人名（次数相同按名称），用于分工选择框
+function getAssigneesByFreq() {
+  const cnt={};
+  tasks.forEach(t=>(t.assignees||'').split(',').map(s=>s.trim()).filter(Boolean).forEach(p=>{ cnt[p]=(cnt[p]||0)+1; }));
+  return Object.keys(cnt).sort((a,b)=> cnt[b]-cnt[a] || a.localeCompare(b));
+}
+// 按出现次数从多到少排列某单值字段的取值（次数相同按名称），用于分类/来源/自定义选择框
+function getFieldByFreq(field) {
+  const cnt={};
+  tasks.forEach(t=>{ const v=(t[field]||'').trim(); if(v) cnt[v]=(cnt[v]||0)+1; });
+  return Object.keys(cnt).sort((a,b)=> cnt[b]-cnt[a] || a.localeCompare(b));
 }
 function getAllSources() {
   return [...new Set(tasks.map(t=>t.source||'').filter(Boolean))].sort();
@@ -815,7 +830,7 @@ function renderCell(col, t, isDeleted) {
 
     case 'action':
       if(isDeleted) return `<td style="text-align:center"><button class="action-btn del" onclick="askPermDelete(${t.id})" title="彻底删除" style="font-size:14px">🗑</button></td>`;
-      return `<td style="text-align:center"><button class="action-btn del" onclick="askDelete(${t.id})" title="删除">×</button></td>`;
+      return `<td style="text-align:center"><button class="action-btn copy" onclick="duplicateTask(${t.id})" title="复制任务">⧉</button><button class="action-btn del" onclick="askDelete(${t.id})" title="删除">×</button></td>`;
 
     default: return '<td></td>';
   }
@@ -837,6 +852,19 @@ function cyclePriority(id) {
   const t=tasks.find(x=>x.id===id); if(!t) return;
   updateTask(id,{priority:t.priority===1?2:t.priority===2?3:1});
   renderTable();
+}
+
+/* 复制任务：克隆出一条内容相同的新任务（状态重置为待办，便于快速建类似任务） */
+function duplicateTask(id) {
+  const t=tasks.find(x=>x.id===id); if(!t) return;
+  const copy=addTask({
+    title:t.title, project:t.project, assignees:t.assignees,
+    priority:t.priority, status:'todo', due_date:t.due_date,
+    source:t.source, custom:t.custom
+  });
+  pushUndo({type:'add',id:copy.id});
+  renderAll();
+  showSnack(`已复制任务：${copy.title}`);
 }
 
 /* inline edit */
@@ -874,7 +902,7 @@ function openSelectPopup(id, field, td) {
   const t=pool.find(x=>x.id===id); if(!t) return;
   const isMulti=field==='assignees';
   const current=t[field]||'';
-  const options=field==='project'?getAllProjects():field==='source'?getAllSources():field==='custom'?getAllCustom():getAllAssignees();
+  const options=field==='project'?getFieldByFreq('project'):field==='source'?getFieldByFreq('source'):field==='custom'?getFieldByFreq('custom'):getAssigneesByFreq();
   const selected=new Set(isMulti?current.split(',').map(s=>s.trim()).filter(Boolean):(current?[current]:[]));  
   if(isMulti) _assigneeOrder=current.split(',').map(s=>s.trim()).filter(Boolean);
   const popup=document.getElementById('select-popup');
@@ -884,6 +912,7 @@ function openSelectPopup(id, field, td) {
   html+=`<div style="padding:0 2px 5px"><input id="sp-manual-input" type="text" class="inline-input" style="height:24px;font-size:12px" placeholder="${ph}" autocomplete="off" oninput="spFilterList()" onkeydown="spManualKeydown(event,${id},'${field}')"></div>`;
   html+=`<div id="sp-list">`;
   if(!isMulti){
+    html+=`<div class="sp-item" id="sp-addnew" style="display:none;color:var(--accent);font-weight:600" onclick="spAddNewSingle(${id},'${field}')"></div>`;
     html+=`<div class="sp-item${current===''?' selected':''}" data-val="" onclick="spSelectFromEl(this,${id},'${field}')">(无)</div>`;
     options.forEach(opt=>{
       html+=`<div class="sp-item${current===opt?' selected':''}" data-val="${esc(opt)}" onclick="spSelectFromEl(this,${id},'${field}')">${esc(opt)}</div>`;
@@ -914,11 +943,23 @@ function openSelectPopup(id, field, td) {
   setTimeout(()=>document.addEventListener('mousedown',spCloseListener),0);
 }
 function spFilterList(){
-  const q=(document.getElementById('sp-manual-input').value||'').toLowerCase();
+  const raw=(document.getElementById('sp-manual-input').value||'').trim();
+  const q=raw.toLowerCase();
   document.querySelectorAll('#sp-list [data-val]').forEach(el=>{
     const v=(el.dataset.val||'').toLowerCase();
     el.style.display=(v.includes(q)||q==='')?'':'none';
   });
+  // 单选框：输入内容与现有选项不完全一致时，显示可点击的「+ 新增」入口
+  const addnew=document.getElementById('sp-addnew');
+  if(addnew){
+    const exists=[...document.querySelectorAll('#sp-list [data-val]')].some(el=>(el.dataset.val||'')===raw);
+    if(raw && !exists){ addnew.textContent=`+ 新增「${raw}」`; addnew.style.display=''; }
+    else { addnew.style.display='none'; }
+  }
+}
+function spAddNewSingle(id,field){
+  const val=(document.getElementById('sp-manual-input').value||'').trim();
+  if(val) spSelect(id,field,val);
 }
 function splitNames(raw){
   return raw.split(/[,，、\s]+/).map(s=>s.trim()).filter(Boolean);
@@ -947,6 +988,8 @@ function spAddToMulti(val,id){
     div.innerHTML=`<input type="checkbox" id="sp-opt-${i}" value="${esc(val)}" checked onchange="spToggle(this)"><label for="sp-opt-${i}" style="cursor:pointer">${esc(val)}</label>`;
     list.appendChild(div);
   } else { existing.checked=true; }
+  // 通过属性/赋值方式勾选不会触发 onchange，需手动维护选择顺序，否则提交时新名字会被过滤掉
+  if(!_assigneeOrder.includes(val)) _assigneeOrder.push(val);
   const none=document.getElementById('sp-none'); if(none) none.checked=false;
   document.getElementById('sp-manual-input').value='';
   spFilterList();
